@@ -1,0 +1,91 @@
+name: $(Version)
+
+parameters:
+  - name: BuildConfiguration
+    displayName: Build Configuration
+    type: string
+    default: Release
+    values:
+      - Debug
+      - Release
+
+variables:
+  VersionPrefix: "1"
+  VersionSuffix: "$[counter(format('version-{0}', variables.VersionPrefix), 0)]"
+  Version: "$[format('{0}.{1}', variables.VersionPrefix, variables.VersionSuffix)]"
+  
+trigger:
+  - master
+  - develop
+  - feature/*
+  - release/*
+  - hotfix/*
+
+pool:
+  vmImage: "windows-latest"
+
+steps:
+  - task: UseDotNet@2
+    displayName: Use SDK
+    inputs:
+      useGlobalJson: true
+
+  - task: DotNetCoreCLI@2
+    displayName: Restore
+    inputs:
+      command: restore
+      feedsToUse: config
+      nugetConfigPath: nuget.config
+
+  - task: DotNetCoreCLI@2
+    displayName: Build
+    inputs:
+      command: build
+      arguments: "-c ${{ parameters.BuildConfiguration }} -p:Version=$(Version)"
+
+  - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B77A063157.SonarQubePrepare@4
+    displayName: 'Prepare analysis on SonarQube'
+    inputs:
+      SonarQube: '<sonar_qube_project_name>'
+      projectKey: '<sonar_qube_project_key>'
+    continueOnError: true
+
+  - task: VSTest@2
+    inputs:
+      testSelector: 'testAssemblies'
+      testAssemblyVer2: |
+        **\bin\${{ parameters.BuildConfiguration }}\**\*Tests.dll
+        !**\obj\**
+        !**\ref\**
+      searchFolder: '$(System.DefaultWorkingDirectory)'
+      runTestsInIsolation: true
+  
+  - task: SonarSource.sonarqube.6D01813A-9589-4B15-8491-8164AEB38055.SonarQubeAnalyze@4
+    displayName: 'Run Code Analysis'
+    continueOnError: true
+
+  - task: PublishCodeCoverageResults@1
+    displayName: 'Publish code coverage'
+    inputs:
+      codeCoverageTool: Cobertura
+      summaryFileLocation: '$(Build.SourcesDirectory)/TestResults/Coverage/*.cobertura.xml'
+      reportDirectory: '$(Build.SourcesDirectory)/TestResults/Coverage'
+
+  - task: DotNetCoreCLI@2
+    displayName: Publish <Project Name>
+    inputs:
+      command: publish
+      publishWebProjects: false
+      projects: "<project_name>"
+      arguments: "-c ${{ parameters.BuildConfiguration }} -o $(Build.ArtifactStagingDirectory)/<project_name>"
+
+  - task: PublishBuildArtifacts@1
+    displayName: Publish Artifacts
+    inputs:
+      PathtoPublish: "$(Build.ArtifactStagingDirectory)/<project_name>"
+      ArtifactName: "<project_name>"
+      publishLocation: "Container"
+
+  - task: SonarSource.sonarqube.291ed61f-1ee4-45d3-b1b0-bf822d9095ef.SonarQubePublish@4
+    displayName: 'Publish Quality Gate Result'
+    continueOnError: true
